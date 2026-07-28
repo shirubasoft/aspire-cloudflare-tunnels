@@ -8,6 +8,7 @@ An Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare.com
 - **DNS Record Management**: DNS CNAME records are automatically created for your hostnames
 - **Ingress Configuration**: Tunnel routes are automatically configured to point to your services
 - **Aspire Dashboard Integration**: Monitor tunnel status directly in the Aspire dashboard
+- **Aspire Pipeline Integration**: Configure deployment-specific routes as a standard `aspire deploy` pipeline step
 
 ## Installation
 
@@ -186,35 +187,69 @@ builder.Build().Run();
 
 ## Deployment Considerations
 
-### ⚠️ Important: Production Deployment
+### Production Deployment
 
 During **local development** (run mode), the integration automatically:
 - Creates the tunnel if it doesn't exist
 - Retrieves the tunnel token
 - Configures DNS records and ingress routes
 
-However, when **deploying to production** (publish mode), you must manually provide the tunnel token:
+For **deployment**, pre-provision the tunnel and provide these Aspire parameters:
 
-1. **Create the tunnel** (if not already created during development):
+| Parameter | Purpose |
+|-----------|---------|
+| `{tunnel-name}-account-id` | Finds the existing tunnel and its DNS zones |
+| `{tunnel-name}-api-token` | Configures Cloudflare DNS and ingress routes |
+| `{tunnel-name}-tunnel-token` | Authenticates the deployed cloudflared connector |
+
+1. **Create the tunnel** if it does not already exist:
+
    ```bash
    cloudflared tunnel create my-tunnel-name
    ```
 
 2. **Get the tunnel token**:
+
    ```bash
    cloudflared tunnel token my-tunnel-name
    ```
+
    Or retrieve it from the [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/) under **Networks** → **Tunnels**.
 
-3. **Configure the token** as an environment variable or secret in your deployment:
-   - The parameter name will be `{tunnel-name}-tunnel-token`
-   - For example: `my-cloudflare-tunnel-tunnel-token`
+3. **Supply the parameters through your pipeline's secret store**. Aspire maps dashes in parameter names to underscores in environment-variable names:
+
+   ```bash
+   export Parameters__my_cloudflare_tunnel_account_id="..."
+   export Parameters__my_cloudflare_tunnel_api_token="..."
+   export Parameters__my_cloudflare_tunnel_tunnel_token="..."
+
+   aspire deploy --non-interactive
+   ```
+
+`aspire deploy` contributes a `configure-{tunnel-name}-cloudflare-routes` step to the AppHost deployment pipeline. The step:
+
+- runs after Aspire publishes the deployment artifacts
+- uses the selected compute environment to resolve each service's deployment URL
+- finds the pre-provisioned Cloudflare tunnel
+- creates the DNS records and updates the tunnel ingress configuration
+- is required by Aspire's standard `deploy` step
+
+You can inspect or run the step directly:
+
+```bash
+aspire deploy --list-steps
+aspire do configure-my-cloudflare-tunnel-cloudflare-routes --non-interactive
+```
+
+`aspire publish` remains side-effect free. It emits the cloudflared resource and tunnel-token parameter, but it does not call the Cloudflare API.
 
 ### Why Manual Token for Deployment?
 
-The automatic tunnel creation uses the Cloudflare API with your development credentials. In production:
-- You don't want API tokens with broad permissions in your deployment
-- Tunnel tokens are scoped specifically to running the tunnel
+Automatic tunnel creation is intentionally limited to local run mode. In a deployment pipeline:
+
+- The Cloudflare API token stays in the pipeline environment and is not passed to the deployed cloudflared container
+- The deployed container receives only the tunnel-scoped token
+- Existing infrastructure remains under explicit lifecycle control
 - This follows the principle of least privilege
 
 ## How It Works
@@ -227,11 +262,12 @@ The automatic tunnel creation uses the Cloudflare API with your development cred
 4. **Ingress Configuration** is updated with routes from hostname to your services
 5. **Cloudflared Container** starts and connects to Cloudflare's network
 
-### Publish Mode (Production)
+### Publish and Deploy Mode
 
-1. **Tunnel Token** must be provided as a parameter
-2. **Cloudflared Container** starts with the provided token
-3. **DNS and Ingress** should be pre-configured in Cloudflare (from development or manually)
+1. **Publish** emits the cloudflared container and a secret tunnel-token parameter without external side effects
+2. **Deploy Pipeline** resolves target URLs from Aspire's selected compute environment
+3. **Cloudflare Pipeline Step** configures DNS and ingress for the existing tunnel
+4. **Cloudflared Container** starts with the provided tunnel token
 
 ## Troubleshooting
 
@@ -257,7 +293,22 @@ This is normal if you've run the application before. The integration will skip c
 
 - Verify your API token is valid and not expired
 - Check that the tunnel token is correct
+- Retrieve the token again if the tunnel was recreated or its credentials were rotated
 - Ensure no firewall is blocking outbound connections to Cloudflare
+
+## Integration Tests
+
+The live integration test uses the sample AppHost to exercise both `aspire deploy` and local run mode:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID="..."
+export CLOUDFLARE_API_TOKEN="..."
+export CLOUDFLARE_TUNNEL_TOKEN="..."
+
+./scripts/run-integration-tests.sh
+```
+
+The script deploys the Docker Compose environment, verifies the public nginx route, destroys the test deployment, starts the local AppHost, and verifies the route again. GitHub Actions calls the same script with repository secrets.
 
 ## Security Best Practices
 
