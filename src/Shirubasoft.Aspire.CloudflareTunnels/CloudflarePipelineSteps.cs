@@ -3,7 +3,7 @@ using Aspire.Hosting.Pipelines;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Aspire.Cloudflared;
+namespace Shirubasoft.Aspire.CloudflareTunnels;
 
 #pragma warning disable ASPIREPIPELINES001
 

@@ -1,7 +1,7 @@
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Logging;
 
-namespace Aspire.Cloudflared;
+namespace Shirubasoft.Aspire.CloudflareTunnels;
 
 /// <summary>
 /// Handles the provisioning of Cloudflare tunnels via the Cloudflare API.

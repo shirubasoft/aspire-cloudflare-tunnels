@@ -3,7 +3,7 @@
 set -euo pipefail
 
 readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly APPHOST="${ASPIRE_APPHOST:-sample/Aspire.Cloudflared.Sample.AppHost.csproj}"
+readonly APPHOST="${ASPIRE_APPHOST:-sample/Shirubasoft.Aspire.CloudflareTunnels.Sample.AppHost.csproj}"
 readonly DEPLOYMENT_ENVIRONMENT="${ASPIRE_TEST_ENVIRONMENT:-CloudflareIntegration}"
 readonly PUBLIC_URL="${ASPIRE_TEST_URL:-https://autocreated.shiruba.dev}"
 

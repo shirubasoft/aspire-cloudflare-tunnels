@@ -1,4 +1,4 @@
-# Aspire.Cloudflared
+# Shirubasoft.Aspire.CloudflareTunnels
 
 An Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), enabling you to expose local services to the internet through Cloudflare's network during development and deployment.
 
@@ -15,16 +15,18 @@ An Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare.com
 Install the NuGet package in your AppHost project:
 
 ```bash
-dotnet add package Shirubasoft.Aspire.Cloudflared
+dotnet add package Shirubasoft.Aspire.CloudflareTunnels
 ```
 
 Or add it directly to your AppHost `.csproj` file:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Shirubasoft.Aspire.Cloudflared" Version="*" />
+  <PackageReference Include="Shirubasoft.Aspire.CloudflareTunnels" Version="*" />
 </ItemGroup>
 ```
+
+If you are upgrading from `Shirubasoft.Aspire.Cloudflared`, replace the package reference with the new package ID. The AppHost APIs remain `AddCloudflareTunnel` and `WithCloudflareTunnel`.
 
 ## Quick Start
 

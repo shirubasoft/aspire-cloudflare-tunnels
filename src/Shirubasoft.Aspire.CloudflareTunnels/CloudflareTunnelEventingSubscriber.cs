@@ -4,7 +4,7 @@ using Aspire.Hosting.Eventing;
 using Aspire.Hosting.Lifecycle;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Aspire.Cloudflared;
+namespace Shirubasoft.Aspire.CloudflareTunnels;
 
 /// <summary>
 /// Registers the runtime behavior for Cloudflare Tunnel resources.

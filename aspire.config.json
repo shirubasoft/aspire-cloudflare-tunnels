@@ -1,5 +1,5 @@
 {
   "appHost": {
-    "path": "sample/Aspire.Cloudflared.Sample.AppHost.csproj"
+    "path": "sample/Shirubasoft.Aspire.CloudflareTunnels.Sample.AppHost.csproj"
   }
 }

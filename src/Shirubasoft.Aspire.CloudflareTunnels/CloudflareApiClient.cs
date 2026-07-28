@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Aspire.Cloudflared;
+namespace Shirubasoft.Aspire.CloudflareTunnels;
 
 /// <summary>
 /// Exception thrown when a Cloudflare API call fails.

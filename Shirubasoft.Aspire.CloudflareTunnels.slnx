@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/sample/">
+    <Project Path="sample/Shirubasoft.Aspire.CloudflareTunnels.Sample.AppHost.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Shirubasoft.Aspire.CloudflareTunnels/Shirubasoft.Aspire.CloudflareTunnels.csproj" />
+  </Folder>
+</Solution>

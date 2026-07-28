@@ -1,8 +1,0 @@
-<Solution>
-  <Folder Name="/sample/">
-    <Project Path="sample/Aspire.Cloudflared.Sample.AppHost.csproj" />
-  </Folder>
-  <Folder Name="/src/">
-    <Project Path="src/Aspire.Cloudflared/Aspire.Cloudflared.csproj" />
-  </Folder>
-</Solution>
