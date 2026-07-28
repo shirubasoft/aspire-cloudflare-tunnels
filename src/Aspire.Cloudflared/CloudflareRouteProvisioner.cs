@@ -64,8 +64,7 @@ internal sealed class CloudflareRouteProvisioner(
             {
                 await notificationService.PublishUpdateAsync(route, state => state with
                 {
-                    State = new ResourceStateSnapshot(KnownResourceStates.Finished, KnownResourceStateStyles.Success),
-                    StopTimeStamp = DateTime.UtcNow
+                    State = new ResourceStateSnapshot(KnownResourceStates.Running, KnownResourceStateStyles.Success)
                 });
             }
         }
