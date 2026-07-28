@@ -1,3 +1,4 @@
+using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Logging;
 
@@ -33,31 +34,24 @@ internal sealed class CloudflareRouteProvisioner(
                 });
             }
 
-            if (!tunnel.TryGetLastAnnotation<CloudflareTunnelCredentialsAnnotation>(out var credentials))
-            {
-                logger.LogWarning("Cloudflare API credentials not found for tunnel '{TunnelName}'", tunnel.Name);
-                throw new InvalidOperationException("Cloudflare API credentials not available.");
-            }
-
-            var apiToken = await credentials.ApiToken.GetValueAsync(cancellationToken);
-            var accountId = await credentials.AccountId.GetValueAsync(cancellationToken);
-
-            if (string.IsNullOrEmpty(apiToken) || string.IsNullOrEmpty(accountId))
-            {
-                throw new InvalidOperationException("Cloudflare API credentials not available.");
-            }
-
-            using var client = new CloudflareApiClient(apiToken, accountId);
+            using var client = await CreateClientAsync(tunnel, cancellationToken);
 
             // Wait for tunnel to be provisioned
             if (string.IsNullOrEmpty(tunnel.TunnelId))
             {
                 logger.LogWarning("Tunnel '{TunnelName}' not yet provisioned, skipping route configuration", tunnel.Name);
-                
+
                 throw new InvalidOperationException("Tunnel not yet provisioned.");
             }
 
-            await DoConfigureRoutesAsync(client, tunnel, routes, logger, cancellationToken);
+            await DoConfigureRoutesAsync(
+                client,
+                tunnel,
+                routes,
+                route => loggerService.GetLogger(route),
+                (route, ct) => BuildRunModeServiceUrlAsync(route, ct),
+                logger,
+                cancellationToken);
 
             // Mark all published routes as finished.
             foreach (var route in routes)
@@ -85,10 +79,49 @@ internal sealed class CloudflareRouteProvisioner(
         }
     }
 
+    /// <summary>
+    /// Configures routes during an Aspire deployment pipeline.
+    /// </summary>
+    public async Task ConfigureRoutesForPipelineAsync(
+        CloudflareTunnelResource tunnel,
+        IReadOnlyList<PublishedRouteResource> routes,
+        DistributedApplicationExecutionContext executionContext,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        using var client = await CreateClientAsync(tunnel, cancellationToken);
+
+        logger.LogInformation(
+            "Looking for pre-provisioned Cloudflare tunnel '{TunnelName}'...",
+            tunnel.Name);
+
+        var existingTunnel = await client.FindTunnelByNameAsync(tunnel.Name, cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Cloudflare tunnel '{tunnel.Name}' was not found. " +
+                "Create it before deployment and provide its tunnel token parameter.");
+
+        tunnel.TunnelId = existingTunnel.Id;
+
+        await DoConfigureRoutesAsync(
+            client,
+            tunnel,
+            routes,
+            _ => logger,
+            (route, ct) => BuildPipelineServiceUrlAsync(
+                tunnel,
+                route,
+                executionContext,
+                ct),
+            logger,
+            cancellationToken);
+    }
+
     private async Task DoConfigureRoutesAsync(
         CloudflareApiClient client,
         CloudflareTunnelResource tunnel,
         IReadOnlyList<PublishedRouteResource> routes,
+        Func<PublishedRouteResource, ILogger> loggerFactory,
+        Func<PublishedRouteResource, CancellationToken, Task<string>> serviceUrlResolver,
         ILogger tunnelLogger,
         CancellationToken cancellationToken)
     {
@@ -107,7 +140,7 @@ internal sealed class CloudflareRouteProvisioner(
 
         foreach (var route in routes)
         {
-            var logger = loggerService.GetLogger(route);
+            var logger = loggerFactory(route);
 
             // Create DNS record
             logger.LogInformation("Looking up the Cloudflare zone for {Hostname}...", route.Hostname);
@@ -119,11 +152,6 @@ internal sealed class CloudflareRouteProvisioner(
                     $"DNS record creation cannot continue. " +
                     "Make sure the domain is registered in your Cloudflare account and the API token has Zone:Read permission.";
                 logger.LogError(errorMessage);
-
-                await notificationService.PublishUpdateAsync(route, state => state with
-                {
-                    State = new ResourceStateSnapshot("Zone Not Found", KnownResourceStateStyles.Error)
-                });
 
                 throw new InvalidOperationException(errorMessage);
             }
@@ -148,7 +176,7 @@ internal sealed class CloudflareRouteProvisioner(
                 throw;
             }
 
-            var serviceUrl = await BuildServiceUrlAsync(route, cancellationToken);
+            var serviceUrl = await serviceUrlResolver(route, cancellationToken);
 
             config.Ingress.Add(new IngressRule
             {
@@ -169,7 +197,29 @@ internal sealed class CloudflareRouteProvisioner(
         await client.UpdateTunnelConfigurationAsync(tunnel.TunnelId!, config, cancellationToken);
     }
 
-    private static async Task<string> BuildServiceUrlAsync(
+    private static async Task<CloudflareApiClient> CreateClientAsync(
+        CloudflareTunnelResource tunnel,
+        CancellationToken cancellationToken)
+    {
+        if (!tunnel.TryGetLastAnnotation<CloudflareTunnelCredentialsAnnotation>(out var credentials))
+        {
+            throw new InvalidOperationException(
+                $"Cloudflare API credentials are not configured on tunnel '{tunnel.Name}'.");
+        }
+
+        var apiToken = await credentials.ApiToken.GetValueAsync(cancellationToken);
+        var accountId = await credentials.AccountId.GetValueAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(apiToken) || string.IsNullOrWhiteSpace(accountId))
+        {
+            throw new InvalidOperationException(
+                $"Cloudflare API token and account ID are required for tunnel '{tunnel.Name}'.");
+        }
+
+        return new CloudflareApiClient(apiToken, accountId);
+    }
+
+    private static async Task<string> BuildRunModeServiceUrlAsync(
         PublishedRouteResource route,
         CancellationToken cancellationToken)
     {
@@ -178,6 +228,41 @@ internal sealed class CloudflareRouteProvisioner(
             ? serviceUrl
             : throw new InvalidOperationException(
                 $"Endpoint '{route.TargetEndpoint.EndpointName}' for resource '{route.TargetResource.Name}' could not be resolved.");
+    }
+
+    private static async Task<string> BuildPipelineServiceUrlAsync(
+        CloudflareTunnelResource tunnel,
+        PublishedRouteResource route,
+        DistributedApplicationExecutionContext executionContext,
+        CancellationToken cancellationToken)
+    {
+        var deploymentTarget = route.TargetResource.GetDeploymentTargetAnnotation()
+            ?? throw new InvalidOperationException(
+                $"Resource '{route.TargetResource.Name}' has no deployment target. " +
+                "Assign it to an Aspire compute environment before deploying.");
+
+        var computeEnvironment = deploymentTarget.ComputeEnvironment
+            ?? throw new InvalidOperationException(
+                $"Deployment target for resource '{route.TargetResource.Name}' has no compute environment.");
+
+#pragma warning disable ASPIRECOMPUTE002
+        var serviceUrlExpression = computeEnvironment.GetEndpointPropertyExpression(
+            route.TargetEndpoint.Property(EndpointProperty.Url));
+#pragma warning restore ASPIRECOMPUTE002
+
+        var serviceUrl = await serviceUrlExpression.GetValueAsync(
+            new ValueProviderContext
+            {
+                Caller = tunnel,
+                ExecutionContext = executionContext
+            },
+            cancellationToken);
+
+        return !string.IsNullOrWhiteSpace(serviceUrl)
+            ? serviceUrl
+            : throw new InvalidOperationException(
+                $"Deployment URL for endpoint '{route.TargetEndpoint.EndpointName}' on resource " +
+                $"'{route.TargetResource.Name}' could not be resolved.");
     }
 
     private static async Task<CloudflareZoneInfo?> FindZoneAsync(

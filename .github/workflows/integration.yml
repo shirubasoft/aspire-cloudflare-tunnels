@@ -23,10 +23,11 @@ jobs:
   live-cloudflare:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
 
     steps:
       - name: Checkout
@@ -45,10 +46,62 @@ jobs:
       - name: Verify Cloudflare secrets
         shell: bash
         run: |
-          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" || -z "$CLOUDFLARE_API_TOKEN" ]]; then
-            echo "::error::CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN repository secrets are required."
+          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" || -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_TUNNEL_TOKEN" ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_TUNNEL_TOKEN repository secrets are required."
             exit 1
           fi
+
+      - name: Run live Aspire deployment pipeline test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aspire_with_parameters() {
+            env \
+              "Parameters__my_cloudflare_tunnel_account_id=$CLOUDFLARE_ACCOUNT_ID" \
+              "Parameters__my_cloudflare_tunnel_api_token=$CLOUDFLARE_API_TOKEN" \
+              "Parameters__my_cloudflare_tunnel_tunnel_token=$CLOUDFLARE_TUNNEL_TOKEN" \
+              aspire "$@"
+          }
+
+          cleanup() {
+            status=$?
+            trap - EXIT
+
+            if [[ $status -ne 0 ]]; then
+              docker ps -a || true
+              connector="$(docker ps -a --format '{{.Names}}' | grep 'my-cloudflare-tunnel' | head -n 1 || true)"
+              if [[ -n "$connector" ]]; then
+                docker logs --tail 100 "$connector" || true
+              fi
+            fi
+
+            aspire_with_parameters destroy \
+              --environment CloudflareIntegration \
+              --yes \
+              --non-interactive || true
+
+            exit "$status"
+          }
+
+          trap cleanup EXIT
+
+          aspire_with_parameters deploy \
+            --environment CloudflareIntegration \
+            --non-interactive
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 6 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --max-time 30 \
+            --output "$RUNNER_TEMP/cloudflare-pipeline-response.html" \
+            https://autocreated.shiruba.dev
+
+          grep --quiet 'Welcome to nginx!' "$RUNNER_TEMP/cloudflare-pipeline-response.html"
 
       - name: Run live Cloudflare integration test
         shell: bash
