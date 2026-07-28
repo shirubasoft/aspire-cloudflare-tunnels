@@ -12,26 +12,35 @@ internal sealed class CloudflareRouteProvisioner(
     ResourceLoggerService loggerService)
 {
     /// <summary>
-    /// Configures routes for all route installers associated with a tunnel.
+    /// Configures all published routes associated with a tunnel.
     /// Creates DNS records and updates the tunnel's ingress configuration.
     /// </summary>
     public async Task ConfigureRoutesAsync(
         CloudflareTunnelResource tunnel,
-        IReadOnlyList<CloudflareRouteInstallerResource> routes,
+        IReadOnlyList<PublishedRouteResource> routes,
         CancellationToken cancellationToken)
     {
         var logger = loggerService.GetLogger(tunnel);
 
         try
         {
-            if (!tunnel.TryGetLastAnnotation<CloudflareApiTokenAnnotation>(out var apiAnnotation))
+            foreach (var route in routes)
+            {
+                await notificationService.PublishUpdateAsync(route, state => state with
+                {
+                    State = new ResourceStateSnapshot(KnownResourceStates.Starting, KnownResourceStateStyles.Info),
+                    StartTimeStamp = DateTime.UtcNow
+                });
+            }
+
+            if (!tunnel.TryGetLastAnnotation<CloudflareTunnelCredentialsAnnotation>(out var credentials))
             {
                 logger.LogWarning("Cloudflare API credentials not found for tunnel '{TunnelName}'", tunnel.Name);
                 throw new InvalidOperationException("Cloudflare API credentials not available.");
             }
 
-            var apiToken = await apiAnnotation.ApiToken.GetValueAsync(cancellationToken);
-            var accountId = await apiAnnotation.AccountId.GetValueAsync(cancellationToken);
+            var apiToken = await credentials.ApiToken.GetValueAsync(cancellationToken);
+            var accountId = await credentials.AccountId.GetValueAsync(cancellationToken);
 
             if (string.IsNullOrEmpty(apiToken) || string.IsNullOrEmpty(accountId))
             {
@@ -50,12 +59,12 @@ internal sealed class CloudflareRouteProvisioner(
 
             await DoConfigureRoutesAsync(client, tunnel, routes, logger, cancellationToken);
 
-            // Mark all route installers as finished
+            // Mark all published routes as finished.
             foreach (var route in routes)
             {
                 await notificationService.PublishUpdateAsync(route, state => state with
                 {
-                    State = new ResourceStateSnapshot(KnownResourceStates.Finished, KnownResourceStateStyles.Success)
+                    State = new ResourceStateSnapshot(KnownResourceStates.Running, KnownResourceStateStyles.Success)
                 });
             }
         }
@@ -67,7 +76,8 @@ internal sealed class CloudflareRouteProvisioner(
             {
                 await notificationService.PublishUpdateAsync(route, state => state with
                 {
-                    State = new ResourceStateSnapshot("Failed", KnownResourceStateStyles.Error)
+                    State = new ResourceStateSnapshot(KnownResourceStates.FailedToStart, KnownResourceStateStyles.Error),
+                    StopTimeStamp = DateTime.UtcNow
                 });
             }
 
@@ -75,37 +85,38 @@ internal sealed class CloudflareRouteProvisioner(
         }
     }
 
-    /// <summary>
-    /// Configures a single route for a tunnel.
-    /// </summary>
-    public async Task ConfigureRouteAsync(
-        CloudflareRouteInstallerResource route,
-        CancellationToken cancellationToken)
-    {
-        await ConfigureRoutesAsync(route.Tunnel, [route], cancellationToken);
-    }
-
     private async Task DoConfigureRoutesAsync(
         CloudflareApiClient client,
         CloudflareTunnelResource tunnel,
-        IReadOnlyList<CloudflareRouteInstallerResource> routes,
+        IReadOnlyList<PublishedRouteResource> routes,
         ILogger tunnelLogger,
         CancellationToken cancellationToken)
     {
-        var config = new TunnelConfiguration();
+        var config = await client.GetTunnelConfigurationAsync(tunnel.TunnelId!, cancellationToken)
+            ?? new TunnelConfiguration();
+
+        var managedHostnames = routes
+            .Select(route => route.Hostname)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Preserve routes managed outside this AppHost while replacing the routes declared
+        // here. The catch-all rule must remain last, so it is rebuilt below.
+        config.Ingress.RemoveAll(rule =>
+            rule.Hostname is null ||
+            managedHostnames.Contains(rule.Hostname));
 
         foreach (var route in routes)
         {
             var logger = loggerService.GetLogger(route);
 
             // Create DNS record
-            var domain = GetRootDomain(route.Hostname);
-            logger.LogInformation("Looking up zone for domain {Domain}...", domain);
-            var zone = await client.FindZoneByNameAsync(domain, cancellationToken);
+            logger.LogInformation("Looking up the Cloudflare zone for {Hostname}...", route.Hostname);
+            var zone = await FindZoneAsync(client, route.Hostname, cancellationToken);
 
             if (zone is null)
             {
-                var errorMessage = $"Could not find zone for domain '{domain}'. DNS record cannot be created for '{route.Hostname}'. " +
+                var errorMessage = $"Could not find a Cloudflare zone for '{route.Hostname}'. " +
+                    $"DNS record creation cannot continue. " +
                     "Make sure the domain is registered in your Cloudflare account and the API token has Zone:Read permission.";
                 logger.LogError(errorMessage);
 
@@ -118,7 +129,7 @@ internal sealed class CloudflareRouteProvisioner(
             }
 
             logger.LogInformation("Found zone {ZoneId} for domain {Domain}. Creating DNS CNAME record for {Hostname} -> {TunnelId}.cfargotunnel.com",
-                zone.Id, domain, route.Hostname, tunnel.TunnelId);
+                zone.Id, zone.Name, route.Hostname, tunnel.TunnelId);
 
             try
             {
@@ -137,7 +148,7 @@ internal sealed class CloudflareRouteProvisioner(
                 throw;
             }
 
-            var serviceUrl = BuildServiceUrl(route);
+            var serviceUrl = await BuildServiceUrlAsync(route, cancellationToken);
 
             config.Ingress.Add(new IngressRule
             {
@@ -158,27 +169,37 @@ internal sealed class CloudflareRouteProvisioner(
         await client.UpdateTunnelConfigurationAsync(tunnel.TunnelId!, config, cancellationToken);
     }
 
-    private static string BuildServiceUrl(CloudflareRouteInstallerResource route)
+    private static async Task<string> BuildServiceUrlAsync(
+        PublishedRouteResource route,
+        CancellationToken cancellationToken)
     {
-        // The service URL needs to point to the target container
-        // In Docker Compose / container environments, we use the container name
-        var targetName = route.TargetResource.Name;
-
-        // Try to determine the port from the endpoint
-        var port = 80; // Default HTTP port
-
-        // The endpoint's target port is what we need
-        // This will be resolved when the endpoint is allocated
-        return $"http://{targetName}:{port}";
+        var serviceUrl = await route.TargetEndpoint.GetValueAsync(cancellationToken);
+        return !string.IsNullOrWhiteSpace(serviceUrl)
+            ? serviceUrl
+            : throw new InvalidOperationException(
+                $"Endpoint '{route.TargetEndpoint.EndpointName}' for resource '{route.TargetResource.Name}' could not be resolved.");
     }
 
-    private static string GetRootDomain(string hostname)
+    private static async Task<CloudflareZoneInfo?> FindZoneAsync(
+        CloudflareApiClient client,
+        string hostname,
+        CancellationToken cancellationToken)
     {
-        var parts = hostname.Split('.');
-        if (parts.Length >= 2)
+        var labels = hostname
+            .TrimEnd('.')
+            .Split('.', StringSplitOptions.RemoveEmptyEntries);
+
+        for (var index = 0; index < labels.Length - 1; index++)
         {
-            return string.Join(".", parts.TakeLast(2));
+            var candidate = string.Join('.', labels[index..]);
+            var zone = await client.FindZoneByNameAsync(candidate, cancellationToken);
+
+            if (zone is not null)
+            {
+                return zone;
+            }
         }
-        return hostname;
+
+        return null;
     }
 }

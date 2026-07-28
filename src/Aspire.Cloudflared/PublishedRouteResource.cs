@@ -1,6 +1,6 @@
 using Aspire.Hosting.ApplicationModel;
 
-namespace Aspire.Cloudflared;
+namespace Aspire.Hosting.ApplicationModel;
 
 /// <summary>
 /// Represents a published route through a Cloudflare tunnel.
@@ -16,6 +16,7 @@ public sealed class PublishedRouteResource(
     [ResourceName] string name,
     string hostname,
     EndpointReference targetEndpoint,
+    IResource targetResource,
     CloudflareTunnelResource tunnel)
     : Resource(name), IResourceWithWaitSupport
 {
@@ -30,7 +31,17 @@ public sealed class PublishedRouteResource(
     public EndpointReference TargetEndpoint { get; } = targetEndpoint;
 
     /// <summary>
+    /// Gets the target resource that receives traffic.
+    /// </summary>
+    public IResource TargetResource { get; } = targetResource;
+
+    /// <summary>
     /// Gets the Cloudflare tunnel resource that this route is associated with.
     /// </summary>
     public CloudflareTunnelResource Tunnel { get; } = tunnel;
+
+    /// <summary>
+    /// Gets or sets whether the DNS record was created or updated successfully.
+    /// </summary>
+    public bool DnsRecordCreated { get; internal set; }
 }

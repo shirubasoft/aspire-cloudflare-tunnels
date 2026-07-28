@@ -1,14 +1,24 @@
 ﻿using Aspire.Hosting.ApplicationModel;
 
-namespace Aspire.Cloudflared;
+namespace Aspire.Hosting.ApplicationModel;
 
 /// <summary>
-/// Represents a logical Cloudflare tunnel configuration.
-/// This resource tracks the tunnel name and associated routes, and is linked to a
-/// <see cref="CloudflaredResource"/> container that runs the actual tunnel connection.
+/// Represents a Cloudflare Tunnel backed by a cloudflared container.
 /// </summary>
 public sealed class CloudflareTunnelResource([ResourceName] string name) : ContainerResource(name)
 {
+    internal const string MetricsEndpointName = "metrics";
+
+    internal const int DefaultMetricsPort = 60123;
+
+    private EndpointReference? _metricsEndpoint;
+
+    /// <summary>
+    /// Gets the cloudflared metrics endpoint.
+    /// </summary>
+    public EndpointReference MetricsEndpoint =>
+        _metricsEndpoint ??= new(this, MetricsEndpointName);
+
     /// <summary>
     /// Gets or sets the Cloudflare tunnel ID (UUID) after creation/discovery.
     /// </summary>

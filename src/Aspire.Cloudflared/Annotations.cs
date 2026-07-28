@@ -1,12 +1,10 @@
 using Aspire.Hosting.ApplicationModel;
 
-namespace Aspire.Cloudflared;
+namespace Aspire.Hosting.ApplicationModel;
 
 /// <summary>
-/// Annotation that stores the API token parameter reference for a tunnel resource.
+/// Stores the Cloudflare credentials used to provision a tunnel.
 /// </summary>
-internal sealed class CloudflareApiTokenAnnotation(ParameterResource apiToken, ParameterResource accountId) : IResourceAnnotation
-{
-    public ParameterResource ApiToken { get; } = apiToken;
-    public ParameterResource AccountId { get; } = accountId;
-}
+public sealed record CloudflareTunnelCredentialsAnnotation(
+    ParameterResource ApiToken,
+    ParameterResource AccountId) : IResourceAnnotation;

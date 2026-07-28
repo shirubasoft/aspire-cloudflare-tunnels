@@ -1,6 +1,6 @@
 using Aspire.Hosting.ApplicationModel;
 
-namespace Aspire.Cloudflared;
+namespace Aspire.Hosting.ApplicationModel;
 
 /// <summary>
 /// Resource that handles creating/finding the Cloudflare tunnel via API.
