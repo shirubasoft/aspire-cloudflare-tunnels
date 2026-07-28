@@ -296,6 +296,20 @@ This is normal if you've run the application before. The integration will skip c
 - Retrieve the token again if the tunnel was recreated or its credentials were rotated
 - Ensure no firewall is blocking outbound connections to Cloudflare
 
+## Integration Tests
+
+The live integration test uses the sample AppHost to exercise both `aspire deploy` and local run mode:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID="..."
+export CLOUDFLARE_API_TOKEN="..."
+export CLOUDFLARE_TUNNEL_TOKEN="..."
+
+./scripts/run-integration-tests.sh
+```
+
+The script deploys the Docker Compose environment, verifies the public nginx route, destroys the test deployment, starts the local AppHost, and verifies the route again. GitHub Actions calls the same script with repository secrets.
+
 ## Security Best Practices
 
 1. **Never commit API tokens** to source control

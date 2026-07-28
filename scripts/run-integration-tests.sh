@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly APPHOST="${ASPIRE_APPHOST:-sample/Aspire.Cloudflared.Sample.AppHost.csproj}"
+readonly DEPLOYMENT_ENVIRONMENT="${ASPIRE_TEST_ENVIRONMENT:-CloudflareIntegration}"
+readonly PUBLIC_URL="${ASPIRE_TEST_URL:-https://autocreated.shiruba.dev}"
+
+cd "$REPOSITORY_ROOT"
+
+require_secret() {
+  local name="$1"
+
+  if [[ -z "${!name:-}" ]]; then
+    printf '::error::%s repository secret is required.\n' "$name" >&2
+    return 1
+  fi
+}
+
+aspire_with_run_parameters() {
+  env \
+    "Parameters__my_cloudflare_tunnel_account_id=$CLOUDFLARE_ACCOUNT_ID" \
+    "Parameters__my_cloudflare_tunnel_api_token=$CLOUDFLARE_API_TOKEN" \
+    aspire "$@"
+}
+
+aspire_with_deployment_parameters() {
+  env \
+    "Parameters__my_cloudflare_tunnel_account_id=$CLOUDFLARE_ACCOUNT_ID" \
+    "Parameters__my_cloudflare_tunnel_api_token=$CLOUDFLARE_API_TOKEN" \
+    "Parameters__my_cloudflare_tunnel_tunnel_token=$CLOUDFLARE_TUNNEL_TOKEN" \
+    aspire "$@"
+}
+
+show_container_diagnostics() {
+  local runtime
+  local connector
+
+  for runtime in docker podman; do
+    if ! command -v "$runtime" >/dev/null 2>&1; then
+      continue
+    fi
+
+    "$runtime" ps -a || true
+    connector="$("$runtime" ps -a --format '{{.Names}}' |
+      grep 'my-cloudflare-tunnel' |
+      head -n 1 || true)"
+
+    if [[ -n "$connector" ]]; then
+      "$runtime" logs --tail 100 "$connector" || true
+    fi
+  done
+}
+
+assert_public_endpoint() {
+  local output_file="$1"
+
+  curl \
+    --fail \
+    --silent \
+    --show-error \
+    --retry 6 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --max-time 30 \
+    --output "$output_file" \
+    "$PUBLIC_URL"
+
+  grep --quiet 'Welcome to nginx!' "$output_file"
+}
+
+run_deployment_pipeline_test() (
+  cleanup() {
+    local status=$?
+    trap - EXIT
+
+    if [[ $status -ne 0 ]]; then
+      show_container_diagnostics
+    fi
+
+    aspire_with_deployment_parameters destroy \
+      --apphost "$APPHOST" \
+      --environment "$DEPLOYMENT_ENVIRONMENT" \
+      --yes \
+      --non-interactive || true
+
+    exit "$status"
+  }
+
+  trap cleanup EXIT
+
+  aspire_with_deployment_parameters deploy \
+    --apphost "$APPHOST" \
+    --environment "$DEPLOYMENT_ENVIRONMENT" \
+    --non-interactive
+
+  assert_public_endpoint "$TEST_OUTPUT_DIRECTORY/cloudflare-pipeline-response.html"
+)
+
+run_local_apphost_test() (
+  cleanup() {
+    local status=$?
+    trap - EXIT
+
+    if [[ $status -ne 0 ]]; then
+      aspire describe --apphost "$APPHOST" --format Table --non-interactive || true
+      aspire logs my-cloudflare-tunnel-installer --apphost "$APPHOST" --tail 100 --non-interactive || true
+      aspire logs my-cloudflare-tunnel-route-autocreated-shiruba-dev --apphost "$APPHOST" --tail 100 --non-interactive || true
+      aspire logs my-cloudflare-tunnel --apphost "$APPHOST" --tail 100 --non-interactive || true
+    fi
+
+    aspire stop --apphost "$APPHOST" --non-interactive || true
+    exit "$status"
+  }
+
+  trap cleanup EXIT
+
+  aspire_with_run_parameters start \
+    --apphost "$APPHOST" \
+    --non-interactive \
+    --format Json > "$TEST_OUTPUT_DIRECTORY/aspire-start.json"
+
+  aspire wait hello-world \
+    --apphost "$APPHOST" \
+    --status healthy \
+    --timeout 180 \
+    --non-interactive
+
+  aspire wait my-cloudflare-tunnel \
+    --apphost "$APPHOST" \
+    --status healthy \
+    --timeout 180 \
+    --non-interactive
+
+  aspire wait my-cloudflare-tunnel-route-autocreated-shiruba-dev \
+    --apphost "$APPHOST" \
+    --status healthy \
+    --timeout 180 \
+    --non-interactive
+
+  assert_public_endpoint "$TEST_OUTPUT_DIRECTORY/cloudflare-response.html"
+)
+
+require_secret CLOUDFLARE_ACCOUNT_ID
+require_secret CLOUDFLARE_API_TOKEN
+require_secret CLOUDFLARE_TUNNEL_TOKEN
+
+if [[ -n "${RUNNER_TEMP:-}" ]]; then
+  TEST_OUTPUT_DIRECTORY="$RUNNER_TEMP"
+  readonly TEST_OUTPUT_DIRECTORY
+else
+  TEST_OUTPUT_DIRECTORY="$(mktemp -d)"
+  readonly TEST_OUTPUT_DIRECTORY
+  trap 'rm -rf -- "$TEST_OUTPUT_DIRECTORY"' EXIT
+fi
+
+run_deployment_pipeline_test
+run_local_apphost_test
