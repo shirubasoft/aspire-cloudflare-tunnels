@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     
     <!-- NuGet Package Properties -->
-    <PackageId>Shirubasoft.Aspire.Cloudflared</PackageId>
+    <PackageId>Shirubasoft.Aspire.CloudflareTunnels</PackageId>
     <Authors>Daniel Reis</Authors>
     <Description>Aspire integration for Cloudflare Tunnels (cloudflared). Easily add cloudflared containers to your Aspire application to expose services through Cloudflare Tunnels.</Description>
     <Copyright>Copyright (c) 2026 shirubasoft</Copyright>

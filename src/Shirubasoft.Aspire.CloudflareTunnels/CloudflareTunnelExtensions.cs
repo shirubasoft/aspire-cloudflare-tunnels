@@ -1,15 +1,15 @@
-using Aspire.Cloudflared;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Lifecycle;
 using Aspire.Hosting.Pipelines;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Shirubasoft.Aspire.CloudflareTunnels;
 
 namespace Aspire.Hosting;
 
 /// <summary>
 /// Provides extension methods for adding and configuring Cloudflare Tunnel resources.
 /// </summary>
-public static class CloudflaredResourceBuilderExtensions
+public static class CloudflareTunnelResourceBuilderExtensions
 {
     /// <summary>
     /// Adds a Cloudflare tunnel resource to the application with automatic tunnel creation.
@@ -38,8 +38,8 @@ public static class CloudflaredResourceBuilderExtensions
         var tunnelResource = new CloudflareTunnelResource(name);
 
         var tunnelBuilder = builder.AddResource(tunnelResource)
-            .WithImage(CloudflaredContainerImageTags.Image, CloudflaredContainerImageTags.Tag)
-            .WithImageRegistry(CloudflaredContainerImageTags.Registry)
+            .WithImage(CloudflareTunnelContainerImageTags.Image, CloudflareTunnelContainerImageTags.Tag)
+            .WithImageRegistry(CloudflareTunnelContainerImageTags.Registry)
             .WithHttpEndpoint(
                 port: metricsPort,
                 targetPort: CloudflareTunnelResource.DefaultMetricsPort,

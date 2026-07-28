@@ -46,13 +46,13 @@ jobs:
           echo "version=$(nbgv get-version -v NuGetPackageVersion)" >> $GITHUB_OUTPUT
 
       - name: Restore dependencies
-        run: dotnet restore src/Aspire.Cloudflared/Aspire.Cloudflared.csproj
+        run: dotnet restore src/Shirubasoft.Aspire.CloudflareTunnels/Shirubasoft.Aspire.CloudflareTunnels.csproj
 
       - name: Build
-        run: dotnet build src/Aspire.Cloudflared/Aspire.Cloudflared.csproj --configuration Release --no-restore
+        run: dotnet build src/Shirubasoft.Aspire.CloudflareTunnels/Shirubasoft.Aspire.CloudflareTunnels.csproj --configuration Release --no-restore
 
       - name: Pack
-        run: dotnet pack src/Aspire.Cloudflared/Aspire.Cloudflared.csproj --configuration Release --no-build --output ${{ env.NUGET_DIRECTORY }}
+        run: dotnet pack src/Shirubasoft.Aspire.CloudflareTunnels/Shirubasoft.Aspire.CloudflareTunnels.csproj --configuration Release --no-build --output ${{ env.NUGET_DIRECTORY }}
 
       - name: Upload NuGet package artifact
         uses: actions/upload-artifact@v4
