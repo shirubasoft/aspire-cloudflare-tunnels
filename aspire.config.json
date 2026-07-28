@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "sample/Aspire.Cloudflared.Sample.AppHost.csproj"
+  }
+}

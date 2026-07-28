@@ -1,11 +1,14 @@
-using Aspire.Hosting;
+using Aspire.Cloudflared;
 using Aspire.Hosting.ApplicationModel;
-using Microsoft.Extensions.DependencyInjection;
+using Aspire.Hosting.Lifecycle;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace Aspire.Cloudflared;
+namespace Aspire.Hosting;
 
-public static class CloudflaredExtensions
+/// <summary>
+/// Provides extension methods for adding and configuring Cloudflare Tunnel resources.
+/// </summary>
+public static class CloudflaredResourceBuilderExtensions
 {
     /// <summary>
     /// Adds a Cloudflare tunnel resource to the application with automatic tunnel creation.
@@ -20,8 +23,8 @@ public static class CloudflaredExtensions
     /// - <c>{name}-api-token</c>: A Cloudflare API token with tunnel permissions
     /// - <c>{name}-account-id</c>: Your Cloudflare account ID
     /// 
-    /// In run mode, an installer resource will create/find the tunnel before starting.
-    /// In publish mode, the tunnel is provisioned during the publish operation.
+    /// In run mode, an installer resource creates or finds the tunnel before starting.
+    /// In publish mode, a pre-provisioned tunnel token is exposed as a deployment parameter.
     /// </remarks>
     public static IResourceBuilder<CloudflareTunnelResource> AddCloudflareTunnel(
         this IDistributedApplicationBuilder builder,
@@ -31,78 +34,65 @@ public static class CloudflaredExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrEmpty(name);
 
-#pragma warning disable ASPIREINTERACTION001
-        var accountIdParameter = builder
-            .AddParameter($"{name}-account-id", secret: false)
-            .WithDescription("The Cloudflare account ID.")
-            .WithCustomInput(p => new()
-            {
-                InputType = InputType.Text,
-                Value = null,
-                Name = p.Name,
-                Placeholder = "Enter your Cloudflare account ID",
-                Description = p.Description,
-                Required = true
-            });
-
-        var apiTokenParameter = builder
-            .AddParameter($"{name}-api-token", secret: true)
-            .WithDescription("The Cloudflare API token with tunnel permissions.")
-            .WithCustomInput(p => new()
-            {
-                InputType = InputType.Text,
-                Value = null,
-                Name = p.Name,
-                Placeholder = "Enter your Cloudflare API token",
-                Description = p.Description,
-                Required = true
-            });
-#pragma warning restore ASPIREINTERACTION001
-
-        // Create the tunnel resource
         var tunnelResource = new CloudflareTunnelResource(name);
 
-        // Store API credentials on the resource
-        tunnelResource.Annotations.Add(new CloudflareApiTokenAnnotation(
-            apiTokenParameter.Resource,
-            accountIdParameter.Resource));
-
-        // Add the container to the application
         var tunnelBuilder = builder.AddResource(tunnelResource)
             .WithImage(CloudflaredContainerImageTags.Image, CloudflaredContainerImageTags.Tag)
             .WithImageRegistry(CloudflaredContainerImageTags.Registry)
             .WithHttpEndpoint(
                 port: metricsPort,
-                targetPort: CloudflaredResource.DefaultMetricsPort,
-                name: CloudflaredResource.MetricsEndpointName)
+                targetPort: CloudflareTunnelResource.DefaultMetricsPort,
+                name: CloudflareTunnelResource.MetricsEndpointName)
             .WithHttpHealthCheck(
                 "/ready",
-                endpointName: CloudflaredResource.MetricsEndpointName)
+                endpointName: CloudflareTunnelResource.MetricsEndpointName)
             .WithArgs(
             [
                 "tunnel",
                 "--no-autoupdate",
                 "--metrics",
-                $"0.0.0.0:{CloudflaredResource.DefaultMetricsPort}",
+                $"0.0.0.0:{CloudflareTunnelResource.DefaultMetricsPort}",
                 "run"
-            ])
-            .WithInitialState(new()
-            {
-                ResourceType = "Cloudflare Tunnel",
-                State = KnownResourceStates.Starting,
-                Properties = []
-            });
-;
+            ]);
 
         if (builder.ExecutionContext.IsRunMode)
         {
-            // Create installer resource that provisions the tunnel
+#pragma warning disable ASPIREINTERACTION001
+            var accountIdParameter = builder
+                .AddParameter($"{name}-account-id", secret: false)
+                .WithDescription("The Cloudflare account ID.")
+                .WithCustomInput(p => new()
+                {
+                    InputType = InputType.Text,
+                    Value = null,
+                    Name = p.Name,
+                    Placeholder = "Enter your Cloudflare account ID",
+                    Description = p.Description,
+                    Required = true
+                });
+
+            var apiTokenParameter = builder
+                .AddParameter($"{name}-api-token", secret: true)
+                .WithDescription("The Cloudflare API token with tunnel permissions.")
+                .WithCustomInput(p => new()
+                {
+                    InputType = InputType.Text,
+                    Value = null,
+                    Name = p.Name,
+                    Placeholder = "Enter your Cloudflare API token",
+                    Description = p.Description,
+                    Required = true
+                });
+#pragma warning restore ASPIREINTERACTION001
+
+            tunnelBuilder.WithAnnotation(new CloudflareTunnelCredentialsAnnotation(
+                apiTokenParameter.Resource,
+                accountIdParameter.Resource));
+
             var installerBuilder = AddTunnelInstaller(builder, tunnelBuilder);
 
-            // In run mode, set the TUNNEL_TOKEN environment variable from the provisioned token
             tunnelBuilder.WithEnvironment(context =>
             {
-                // The token is set by the installer before the container starts
                 if (!string.IsNullOrEmpty(tunnelResource.TunnelToken))
                 {
                     context.EnvironmentVariables["TUNNEL_TOKEN"] = tunnelResource.TunnelToken;
@@ -148,12 +138,17 @@ public static class CloudflaredExtensions
         ArgumentNullException.ThrowIfNull(tunnel);
         ArgumentException.ThrowIfNullOrEmpty(hostname);
 
-        var endpoint = builder.Resource.GetEndpoint(endpointName);
+        var endpoint = builder.GetEndpoint(
+            endpointName,
+            KnownNetworkIdentifiers.DefaultAspireContainerNetwork);
+
+        // Register the reference so Aspire configures container-to-host tunneling when
+        // the target is a host process and container DNS when it is another container.
+        tunnel.WithReference(endpoint);
 
         if (builder.ApplicationBuilder.ExecutionContext.IsRunMode)
         {
-            // RUN MODE: Create route installer
-            AddRouteInstaller(builder.ApplicationBuilder, tunnel, builder.Resource, hostname, endpoint);
+            AddPublishedRoute(builder.ApplicationBuilder, tunnel, builder.Resource, hostname, endpoint);
         }
 
         return builder;
@@ -166,9 +161,9 @@ public static class CloudflaredExtensions
         var installerName = $"{tunnel.Resource.Name}-installer";
         var installer = new CloudflareTunnelInstallerResource(installerName, tunnel.Resource);
 
-        // Register the provisioner services
         builder.Services.TryAddSingleton<CloudflareTunnelProvisioner>();
         builder.Services.TryAddSingleton<CloudflareRouteProvisioner>();
+        builder.Services.TryAddEventingSubscriber<CloudflareTunnelEventingSubscriber>();
 
         var installerBuilder = builder.AddResource(installer)
             .WithParentRelationship(tunnel.Resource)
@@ -176,21 +171,18 @@ public static class CloudflaredExtensions
             .WithInitialState(new()
             {
                 ResourceType = "Tunnel Installer",
-                State = KnownResourceStates.Starting,
-                Properties = []
+                CreationTimeStamp = DateTime.UtcNow,
+                State = KnownResourceStates.NotStarted,
+                Properties =
+                [
+                    new(CustomResourceKnownProperties.Source, "Cloudflare API")
+                ]
             });
-
-        builder.Eventing.Subscribe<InitializeResourceEvent>(installer, async (@event, ct) =>
-        {
-            var services = @event.Services;
-            var provisioner = services.GetRequiredService<CloudflareTunnelProvisioner>();
-            await provisioner.ProvisionAsync(installer, ct);
-        });
 
         return installerBuilder;
     }
 
-    private static void AddRouteInstaller(
+    private static void AddPublishedRoute(
         IDistributedApplicationBuilder builder,
         IResourceBuilder<CloudflareTunnelResource> tunnel,
         IResource targetResource,
@@ -198,31 +190,28 @@ public static class CloudflaredExtensions
         EndpointReference endpoint)
     {
         var safeName = hostname.Replace(".", "-").Replace(":", "-");
-        var installerName = $"{tunnel.Resource.Name}-route-{safeName}";
+        var routeName = $"{tunnel.Resource.Name}-route-{safeName}";
 
-        var installer = new CloudflareRouteInstallerResource(
-            installerName,
-            tunnel.Resource,
+        var route = new PublishedRouteResource(
+            routeName,
             hostname,
             endpoint,
-            targetResource);
+            targetResource,
+            tunnel.Resource);
 
-        var installerBuilder = builder.AddResource(installer)
+        builder.AddResource(route)
             .WithParentRelationship(tunnel.Resource)
             .ExcludeFromManifest()
             .WithInitialState(new()
             {
-                ResourceType = "Route Installer",
-                State = KnownResourceStates.Starting,
-                Properties = [new("Hostname", hostname)]
+                ResourceType = "Cloudflare Route",
+                CreationTimeStamp = DateTime.UtcNow,
+                State = KnownResourceStates.NotStarted,
+                Properties =
+                [
+                    new(CustomResourceKnownProperties.Source, "Cloudflare API"),
+                    new("Hostname", hostname)
+                ]
             });
-
-        builder.Eventing.Subscribe<ResourceReadyEvent>(tunnel.Resource, async (@event, ct) =>
-        {
-            var services = @event.Services;
-
-            var provisioner = services.GetRequiredService<CloudflareRouteProvisioner>();
-            await provisioner.ConfigureRouteAsync(installer, ct);
-        });
     }
 }

@@ -1,6 +1,6 @@
 # Aspire.Cloudflared
 
-A .NET Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), enabling you to expose local services to the internet through Cloudflare's network during development and deployment.
+An Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), enabling you to expose local services to the internet through Cloudflare's network during development and deployment.
 
 ## Features
 
@@ -14,26 +14,24 @@ A .NET Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare
 Install the NuGet package in your AppHost project:
 
 ```bash
-dotnet add package Aspire.Cloudflared
+dotnet add package Shirubasoft.Aspire.Cloudflared
 ```
 
 Or add it directly to your AppHost `.csproj` file:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Aspire.Cloudflared" Version="*" />
+  <PackageReference Include="Shirubasoft.Aspire.Cloudflared" Version="*" />
 </ItemGroup>
 ```
 
 ## Quick Start
 
 ```csharp
-using Aspire.Cloudflared;
-
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Add your service (e.g., a simple nginx container)
-var webApp = builder.AddContainer("web-app", "nginx", "alpine")
+var webApp = builder.AddContainer("web-app", "docker.io/library/nginx", "alpine")
     .WithHttpEndpoint(targetPort: 80, name: "http");
 
 // Create a Cloudflare tunnel
@@ -160,15 +158,13 @@ IResourceBuilder<T> WithCloudflareTunnel<T>(
 ## Complete Example
 
 ```csharp
-using Aspire.Cloudflared;
-
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Create a Cloudflare tunnel
 var tunnel = builder.AddCloudflareTunnel("my-cloudflare-tunnel");
 
 // Example 1: Expose an nginx container
-var nginx = builder.AddContainer("hello-world", "nginx", "alpine")
+var nginx = builder.AddContainer("hello-world", "docker.io/library/nginx", "alpine")
     .WithHttpEndpoint(targetPort: 80, name: "http");
 
 nginx.WithCloudflareTunnel(tunnel, hostname: "hello.example.com");

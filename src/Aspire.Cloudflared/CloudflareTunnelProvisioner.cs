@@ -22,16 +22,18 @@ internal sealed class CloudflareTunnelProvisioner(
 
         try
         {
+            await notificationService.PublishUpdateAsync(installer, state => state with
+            {
+                State = new ResourceStateSnapshot(KnownResourceStates.Starting, KnownResourceStateStyles.Info),
+                StartTimeStamp = DateTime.UtcNow
+            });
+
             await DoProvisionAsync(installer, tunnel, logger, cancellationToken);
 
             await notificationService.PublishUpdateAsync(installer, state => state with
             {
-                State = new ResourceStateSnapshot(KnownResourceStates.Finished, KnownResourceStateStyles.Success)
-            });
-
-            await notificationService.PublishUpdateAsync(tunnel, state => state with
-            {
-                State = new ResourceStateSnapshot(KnownResourceStates.Running, KnownResourceStateStyles.Success),
+                State = new ResourceStateSnapshot(KnownResourceStates.Finished, KnownResourceStateStyles.Success),
+                StopTimeStamp = DateTime.UtcNow,
                 Properties = [
                     ..state.Properties,
                     new("TunnelId", tunnel.TunnelId ?? "Unknown")
@@ -44,7 +46,8 @@ internal sealed class CloudflareTunnelProvisioner(
 
             await notificationService.PublishUpdateAsync(installer, state => state with
             {
-                State = new ResourceStateSnapshot("Failed", KnownResourceStateStyles.Error)
+                State = new ResourceStateSnapshot(KnownResourceStates.FailedToStart, KnownResourceStateStyles.Error),
+                StopTimeStamp = DateTime.UtcNow
             });
 
             throw;
@@ -57,13 +60,13 @@ internal sealed class CloudflareTunnelProvisioner(
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        if (!tunnel.TryGetLastAnnotation<CloudflareApiTokenAnnotation>(out var apiAnnotation))
+        if (!tunnel.TryGetLastAnnotation<CloudflareTunnelCredentialsAnnotation>(out var credentials))
         {
             throw new InvalidOperationException("Cloudflare API credentials not configured on tunnel resource.");
         }
 
-        var apiToken = await apiAnnotation.ApiToken.GetValueAsync(cancellationToken);
-        var accountId = await apiAnnotation.AccountId.GetValueAsync(cancellationToken);
+        var apiToken = await credentials.ApiToken.GetValueAsync(cancellationToken);
+        var accountId = await credentials.AccountId.GetValueAsync(cancellationToken);
 
         if (string.IsNullOrEmpty(apiToken) || string.IsNullOrEmpty(accountId))
         {

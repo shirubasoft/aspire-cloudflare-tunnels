@@ -1,11 +1,11 @@
-<Project Sdk="Aspire.AppHost.Sdk/13.1.0">
+<Project Sdk="Aspire.AppHost.Sdk/13.4.6">
 
   <ItemGroup>
     <ProjectReference Include="..\src\Aspire.Cloudflared\Aspire.Cloudflared.csproj" IsAspireProjectResource="false" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting.Docker" Version="13.1.0-preview.1.25616.3" />
+    <PackageReference Include="Aspire.Hosting.Docker" Version="13.4.6" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -1,6 +1,6 @@
-namespace Aspire.Cloudflared;
+namespace Aspire.Hosting;
 
-public static class CloudflaredContainerImageTags
+internal static class CloudflaredContainerImageTags
 {
     public const string Tag = "2025.11.1";
     public const string Registry = "docker.io";
