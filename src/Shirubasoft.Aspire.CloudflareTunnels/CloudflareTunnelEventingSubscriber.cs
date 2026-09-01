@@ -17,7 +17,7 @@ internal sealed class CloudflareTunnelEventingSubscriber :
         DistributedApplicationExecutionContext context,
         CancellationToken cancellationToken)
     {
-        var model = context.ServiceProvider.GetRequiredService<DistributedApplicationModel>();
+        var model = context.Services.GetRequiredService<DistributedApplicationModel>();
 
         foreach (var installer in model.Resources.OfType<CloudflareTunnelInstallerResource>())
         {

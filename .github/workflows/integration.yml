@@ -42,7 +42,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Install Aspire CLI
-        run: dotnet tool install --global Aspire.Cli --version 13.4.6
+        run: dotnet tool install --global Aspire.Cli --version 13.5.3
 
       - name: Run live Cloudflare integration tests
         shell: bash
