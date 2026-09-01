@@ -51,6 +51,8 @@ When you run the application, Aspire will prompt you for:
 - **Account ID**: Your Cloudflare account ID
 - **API Token**: A Cloudflare API token with the required permissions
 
+Each configured hostname appears as a clickable URL on the tunnel resource in the Aspire dashboard.
+
 ## Quick tunnels
 
 [Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) expose one endpoint through a temporary, randomly generated `trycloudflare.com` URL. They do not require a Cloudflare account or API token.

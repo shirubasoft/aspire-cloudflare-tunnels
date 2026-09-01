@@ -71,6 +71,44 @@ assert_public_endpoint() {
   grep --quiet 'Welcome to nginx!' "$output_file"
 }
 
+wait_for_resource_url() {
+  local resource_name="$1"
+  local output_file="$2"
+  local url_name="${3:-}"
+  local expected_url="${4:-}"
+  local deadline=$((SECONDS + 60))
+  local resource_url
+
+  while ((SECONDS < deadline)); do
+    if aspire describe \
+      --apphost "$APPHOST" \
+      --format Json \
+      --non-interactive > "$output_file" &&
+      resource_url="$(jq --exit-status --raw-output \
+        --arg resource_name "$resource_name" \
+        --arg url_name "$url_name" \
+        --arg expected_url "$expected_url" '
+          .resources[] |
+          select(.displayName == $resource_name) |
+          .urls[] |
+          select(
+            ($url_name == "" or .name == $url_name) and
+            ($expected_url == "" or .url == $expected_url)
+          ) |
+          .url
+        ' "$output_file")"; then
+      printf '%s\n' "$resource_url"
+      return 0
+    fi
+
+    sleep 2
+  done
+
+  printf '::error::Timed out waiting for a dashboard URL on resource %s.\n' \
+    "$resource_name" >&2
+  return 1
+}
+
 run_deployment_pipeline_test() (
   cleanup() {
     local status=$?
@@ -137,19 +175,11 @@ run_quick_tunnel_test() (
     --timeout 180 \
     --non-interactive
 
-  aspire describe \
-    --apphost "$APPHOST" \
-    --format Json \
-    --non-interactive > "$TEST_OUTPUT_DIRECTORY/aspire-quick-tunnel-describe.json"
-
   local quick_tunnel_url
-  quick_tunnel_url="$(jq --exit-status --raw-output '
-    .resources[] |
-    select(.displayName == "my-cloudflare-quick-tunnel") |
-    .urls[] |
-    select(.name == "public") |
-    .url
-  ' "$TEST_OUTPUT_DIRECTORY/aspire-quick-tunnel-describe.json")"
+  quick_tunnel_url="$(wait_for_resource_url \
+    my-cloudflare-quick-tunnel \
+    "$TEST_OUTPUT_DIRECTORY/aspire-quick-tunnel-describe.json" \
+    public)"
 
   assert_public_endpoint \
     "$quick_tunnel_url" \
@@ -196,6 +226,12 @@ run_local_apphost_test() (
     --status healthy \
     --timeout 180 \
     --non-interactive
+
+  wait_for_resource_url \
+    my-cloudflare-tunnel \
+    "$TEST_OUTPUT_DIRECTORY/aspire-named-tunnel-describe.json" \
+    "" \
+    "$PUBLIC_URL" >/dev/null
 
   assert_public_endpoint \
     "$PUBLIC_URL" \

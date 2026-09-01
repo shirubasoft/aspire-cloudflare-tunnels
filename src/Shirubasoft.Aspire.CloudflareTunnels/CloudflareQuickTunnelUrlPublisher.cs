@@ -9,6 +9,7 @@ internal sealed partial class CloudflareQuickTunnelUrlPublisher(
     ResourceLoggerService loggerService)
 {
     private const string PublicEndpointName = "public";
+    private static readonly TimeSpan PublicUrlDiscoveryTimeout = TimeSpan.FromSeconds(30);
 
     public async Task PublishAsync(
         CloudflareQuickTunnelResource tunnel,
@@ -48,18 +49,28 @@ internal sealed partial class CloudflareQuickTunnelUrlPublisher(
         CloudflareQuickTunnelResource tunnel,
         CancellationToken cancellationToken)
     {
-        await foreach (var lines in loggerService
-            .GetAllAsync(tunnel)
-            .WithCancellation(cancellationToken))
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(PublicUrlDiscoveryTimeout);
+
+        try
         {
-            foreach (var line in lines)
+            await foreach (var lines in loggerService
+                .WatchAsync(tunnel)
+                .WithCancellation(timeoutSource.Token))
             {
-                var match = QuickTunnelUrl().Match(line.Content);
-                if (match.Success)
+                foreach (var line in lines)
                 {
-                    return match.Value;
+                    var match = QuickTunnelUrl().Match(line.Content);
+                    if (match.Success)
+                    {
+                        return match.Value;
+                    }
                 }
             }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
         }
 
         return null;

@@ -229,6 +229,7 @@ public static class CloudflareTunnelResourceBuilderExtensions
         // Register the reference so Aspire configures container-to-host tunneling when
         // the target is a host process and container DNS when it is another container.
         tunnel.WithReference(endpoint);
+        tunnel.WithUrl($"https://{hostname}", hostname);
 
         AddPublishedRoute(
             builder.ApplicationBuilder,
