@@ -17,7 +17,7 @@ internal sealed class CloudflareTunnelEventingSubscriber :
         DistributedApplicationExecutionContext context,
         CancellationToken cancellationToken)
     {
-        var model = context.ServiceProvider.GetRequiredService<DistributedApplicationModel>();
+        var model = context.Services.GetRequiredService<DistributedApplicationModel>();
 
         foreach (var installer in model.Resources.OfType<CloudflareTunnelInstallerResource>())
         {
@@ -44,6 +44,15 @@ internal sealed class CloudflareTunnelEventingSubscriber :
             {
                 var provisioner = @event.Services.GetRequiredService<CloudflareRouteProvisioner>();
                 await provisioner.ConfigureRoutesAsync(tunnel, routes, ct);
+            });
+        }
+
+        foreach (var tunnel in model.Resources.OfType<CloudflareQuickTunnelResource>())
+        {
+            eventing.Subscribe<ResourceReadyEvent>(tunnel, async (@event, ct) =>
+            {
+                var publisher = @event.Services.GetRequiredService<CloudflareQuickTunnelUrlPublisher>();
+                await publisher.PublishAsync(tunnel, ct);
             });
         }
 
