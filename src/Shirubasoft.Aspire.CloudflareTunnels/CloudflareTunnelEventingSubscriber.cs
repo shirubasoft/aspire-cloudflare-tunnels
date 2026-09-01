@@ -47,6 +47,15 @@ internal sealed class CloudflareTunnelEventingSubscriber :
             });
         }
 
+        foreach (var tunnel in model.Resources.OfType<CloudflareQuickTunnelResource>())
+        {
+            eventing.Subscribe<ResourceReadyEvent>(tunnel, async (@event, ct) =>
+            {
+                var publisher = @event.Services.GetRequiredService<CloudflareQuickTunnelUrlPublisher>();
+                await publisher.PublishAsync(tunnel, ct);
+            });
+        }
+
         return Task.CompletedTask;
     }
 }

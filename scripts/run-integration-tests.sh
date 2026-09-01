@@ -44,7 +44,7 @@ show_container_diagnostics() {
 
     "$runtime" ps -a || true
     connector="$("$runtime" ps -a --format '{{.Names}}' |
-      grep 'my-cloudflare-tunnel' |
+      grep 'my-cloudflare-.*tunnel' |
       head -n 1 || true)"
 
     if [[ -n "$connector" ]]; then
@@ -54,18 +54,19 @@ show_container_diagnostics() {
 }
 
 assert_public_endpoint() {
-  local output_file="$1"
+  local public_url="$1"
+  local output_file="$2"
 
   curl \
     --fail \
     --silent \
     --show-error \
-    --retry 6 \
+    --retry 12 \
     --retry-all-errors \
     --retry-delay 5 \
     --max-time 30 \
     --output "$output_file" \
-    "$PUBLIC_URL"
+    "$public_url"
 
   grep --quiet 'Welcome to nginx!' "$output_file"
 }
@@ -95,7 +96,64 @@ run_deployment_pipeline_test() (
     --environment "$DEPLOYMENT_ENVIRONMENT" \
     --non-interactive
 
-  assert_public_endpoint "$TEST_OUTPUT_DIRECTORY/cloudflare-pipeline-response.html"
+  assert_public_endpoint \
+    "$PUBLIC_URL" \
+    "$TEST_OUTPUT_DIRECTORY/cloudflare-pipeline-response.html"
+)
+
+run_quick_tunnel_test() (
+  cleanup() {
+    local status=$?
+    trap - EXIT
+
+    if [[ $status -ne 0 ]]; then
+      aspire describe --apphost "$APPHOST" --format Table --non-interactive || true
+      aspire logs my-cloudflare-quick-tunnel --apphost "$APPHOST" --tail 100 --non-interactive || true
+      show_container_diagnostics
+    fi
+
+    aspire stop --apphost "$APPHOST" --non-interactive || true
+    exit "$status"
+  }
+
+  trap cleanup EXIT
+
+  aspire start \
+    --apphost "$APPHOST" \
+    --non-interactive \
+    --format Json \
+    -- \
+    --quick-tunnel > "$TEST_OUTPUT_DIRECTORY/aspire-quick-tunnel-start.json"
+
+  aspire wait hello-world \
+    --apphost "$APPHOST" \
+    --status healthy \
+    --timeout 180 \
+    --non-interactive
+
+  aspire wait my-cloudflare-quick-tunnel \
+    --apphost "$APPHOST" \
+    --status healthy \
+    --timeout 180 \
+    --non-interactive
+
+  aspire describe \
+    --apphost "$APPHOST" \
+    --format Json \
+    --non-interactive > "$TEST_OUTPUT_DIRECTORY/aspire-quick-tunnel-describe.json"
+
+  local quick_tunnel_url
+  quick_tunnel_url="$(jq --exit-status --raw-output '
+    .resources[] |
+    select(.displayName == "my-cloudflare-quick-tunnel") |
+    .urls[] |
+    select(.name == "public") |
+    .url
+  ' "$TEST_OUTPUT_DIRECTORY/aspire-quick-tunnel-describe.json")"
+
+  assert_public_endpoint \
+    "$quick_tunnel_url" \
+    "$TEST_OUTPUT_DIRECTORY/cloudflare-quick-tunnel-response.html"
 )
 
 run_local_apphost_test() (
@@ -139,12 +197,10 @@ run_local_apphost_test() (
     --timeout 180 \
     --non-interactive
 
-  assert_public_endpoint "$TEST_OUTPUT_DIRECTORY/cloudflare-response.html"
+  assert_public_endpoint \
+    "$PUBLIC_URL" \
+    "$TEST_OUTPUT_DIRECTORY/cloudflare-response.html"
 )
-
-require_secret CLOUDFLARE_ACCOUNT_ID
-require_secret CLOUDFLARE_API_TOKEN
-require_secret CLOUDFLARE_TUNNEL_TOKEN
 
 if [[ -n "${RUNNER_TEMP:-}" ]]; then
   TEST_OUTPUT_DIRECTORY="$RUNNER_TEMP"
@@ -154,6 +210,12 @@ else
   readonly TEST_OUTPUT_DIRECTORY
   trap 'rm -rf -- "$TEST_OUTPUT_DIRECTORY"' EXIT
 fi
+
+run_quick_tunnel_test
+
+require_secret CLOUDFLARE_ACCOUNT_ID
+require_secret CLOUDFLARE_API_TOKEN
+require_secret CLOUDFLARE_TUNNEL_TOKEN
 
 run_deployment_pipeline_test
 run_local_apphost_test

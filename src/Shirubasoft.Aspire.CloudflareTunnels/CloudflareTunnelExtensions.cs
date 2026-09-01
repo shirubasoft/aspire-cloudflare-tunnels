@@ -37,22 +37,15 @@ public static class CloudflareTunnelResourceBuilderExtensions
 
         var tunnelResource = new CloudflareTunnelResource(name);
 
-        var tunnelBuilder = builder.AddResource(tunnelResource)
-            .WithImage(CloudflareTunnelContainerImageTags.Image, CloudflareTunnelContainerImageTags.Tag)
-            .WithImageRegistry(CloudflareTunnelContainerImageTags.Registry)
-            .WithHttpEndpoint(
-                port: metricsPort,
-                targetPort: CloudflareTunnelResource.DefaultMetricsPort,
-                name: CloudflareTunnelResource.MetricsEndpointName)
-            .WithHttpHealthCheck(
-                "/ready",
-                endpointName: CloudflareTunnelResource.MetricsEndpointName)
+        var tunnelBuilder = ConfigureCloudflaredContainer(
+                builder.AddResource(tunnelResource),
+                metricsPort)
             .WithArgs(
             [
                 "tunnel",
                 "--no-autoupdate",
                 "--metrics",
-                $"0.0.0.0:{CloudflareTunnelResource.DefaultMetricsPort}",
+                $"0.0.0.0:{CloudflareTunnelContainerDefaults.MetricsPort}",
                 "run"
             ]);
 
@@ -129,6 +122,86 @@ public static class CloudflareTunnelResourceBuilderExtensions
     }
 
     /// <summary>
+    /// Adds an account-free Cloudflare Quick Tunnel for local development.
+    /// </summary>
+    /// <param name="builder">The distributed application builder.</param>
+    /// <param name="name">The name of the tunnel resource.</param>
+    /// <param name="metricsPort">Optional port for the metrics endpoint.</param>
+    /// <returns>A resource builder for the Quick Tunnel.</returns>
+    /// <remarks>
+    /// Quick Tunnels receive a random <c>trycloudflare.com</c> URL each time they start.
+    /// They are excluded from deployment manifests and must reference exactly one target endpoint.
+    /// </remarks>
+    public static IResourceBuilder<CloudflareQuickTunnelResource> AddCloudflareQuickTunnel(
+        this IDistributedApplicationBuilder builder,
+        [ResourceName] string name,
+        int? metricsPort = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrEmpty(name);
+
+        var tunnelResource = new CloudflareQuickTunnelResource(name);
+
+        var tunnelBuilder = ConfigureCloudflaredContainer(
+                builder.AddResource(tunnelResource),
+                metricsPort)
+            .WithArgs(context =>
+            {
+                var targetEndpoint = tunnelResource.TargetEndpoint
+                    ?? throw new InvalidOperationException(
+                        $"Cloudflare Quick Tunnel '{name}' must reference a target resource.");
+
+                context.Args.Add("tunnel");
+                context.Args.Add("--no-autoupdate");
+                context.Args.Add("--metrics");
+                context.Args.Add($"0.0.0.0:{CloudflareTunnelContainerDefaults.MetricsPort}");
+                context.Args.Add("--url");
+                context.Args.Add(targetEndpoint);
+            })
+            .ExcludeFromManifest();
+
+        builder.Services.TryAddSingleton<CloudflareQuickTunnelUrlPublisher>();
+        builder.Services.TryAddEventingSubscriber<CloudflareTunnelEventingSubscriber>();
+
+        return tunnelBuilder;
+    }
+
+    /// <summary>
+    /// Exposes one resource endpoint through a Cloudflare Quick Tunnel.
+    /// </summary>
+    /// <typeparam name="T">The type of resource with endpoints.</typeparam>
+    /// <param name="tunnel">The Quick Tunnel resource builder.</param>
+    /// <param name="target">The resource whose endpoint will receive traffic.</param>
+    /// <param name="endpointName">The name of the endpoint to expose. Defaults to <c>http</c>.</param>
+    /// <returns>The Quick Tunnel resource builder.</returns>
+    public static IResourceBuilder<CloudflareQuickTunnelResource> WithReference<T>(
+        this IResourceBuilder<CloudflareQuickTunnelResource> tunnel,
+        IResourceBuilder<T> target,
+        string endpointName = "http")
+        where T : IResourceWithEndpoints
+    {
+        ArgumentNullException.ThrowIfNull(tunnel);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentException.ThrowIfNullOrEmpty(endpointName);
+
+        if (tunnel.Resource.TargetEndpoint is not null)
+        {
+            throw new InvalidOperationException(
+                $"Cloudflare Quick Tunnel '{tunnel.Resource.Name}' already references an endpoint. " +
+                "Create another Quick Tunnel to expose another endpoint.");
+        }
+
+        var endpoint = target.GetEndpoint(
+            endpointName,
+            KnownNetworkIdentifiers.DefaultAspireContainerNetwork);
+
+        tunnel.Resource.TargetEndpoint = endpoint;
+        tunnel.WithReference(endpoint);
+
+        return tunnel;
+    }
+
+    /// <summary>
     /// Exposes a resource's endpoint through a Cloudflare tunnel with the specified hostname.
     /// Creates DNS record and configures tunnel ingress routing.
     /// </summary>
@@ -192,6 +265,23 @@ public static class CloudflareTunnelResourceBuilderExtensions
             });
 
         return installerBuilder;
+    }
+
+    private static IResourceBuilder<T> ConfigureCloudflaredContainer<T>(
+        IResourceBuilder<T> builder,
+        int? metricsPort)
+        where T : ContainerResource
+    {
+        return builder
+            .WithImage(CloudflareTunnelContainerImageTags.Image, CloudflareTunnelContainerImageTags.Tag)
+            .WithImageRegistry(CloudflareTunnelContainerImageTags.Registry)
+            .WithHttpEndpoint(
+                port: metricsPort,
+                targetPort: CloudflareTunnelContainerDefaults.MetricsPort,
+                name: CloudflareTunnelContainerDefaults.MetricsEndpointName)
+            .WithHttpHealthCheck(
+                "/ready",
+                endpointName: CloudflareTunnelContainerDefaults.MetricsEndpointName);
     }
 
     private static void AddPublishedRoute(

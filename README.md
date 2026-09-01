@@ -7,6 +7,7 @@ An Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare.com
 - **Automatic Tunnel Creation**: Tunnels are automatically created via the Cloudflare API during local development
 - **DNS Record Management**: DNS CNAME records are automatically created for your hostnames
 - **Ingress Configuration**: Tunnel routes are automatically configured to point to your services
+- **Quick Tunnels**: Expose one local endpoint without a Cloudflare account or API token
 - **Aspire Dashboard Integration**: Monitor tunnel status directly in the Aspire dashboard
 - **Aspire Pipeline Integration**: Configure deployment-specific routes as a standard `aspire deploy` pipeline step
 
@@ -49,6 +50,24 @@ builder.Build().Run();
 When you run the application, Aspire will prompt you for:
 - **Account ID**: Your Cloudflare account ID
 - **API Token**: A Cloudflare API token with the required permissions
+
+## Quick tunnels
+
+[Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) expose one endpoint through a temporary, randomly generated `trycloudflare.com` URL. They do not require a Cloudflare account or API token.
+
+```csharp
+var builder = DistributedApplication.CreateBuilder(args);
+
+var webApp = builder.AddContainer("web-app", "docker.io/library/nginx", "alpine")
+    .WithHttpEndpoint(targetPort: 80, name: "http");
+
+builder.AddCloudflareQuickTunnel("web-tunnel")
+    .WithReference(webApp);
+
+builder.Build().Run();
+```
+
+The public URL appears on the Quick Tunnel resource in the Aspire dashboard after `cloudflared` connects. Quick Tunnels are public, receive a new URL each time they start, and are intended for development and testing. They are excluded from published deployment manifests. Create a separate Quick Tunnel for each endpoint you want to expose.
 
 ## Getting Your Cloudflare Account ID
 
@@ -157,6 +176,27 @@ IResourceBuilder<T> WithCloudflareTunnel<T>(
 - `tunnel`: The Cloudflare tunnel resource to route through
 - `hostname`: The public hostname for this route (e.g., `"api.example.com"`)
 - `endpointName`: The name of the endpoint to expose (defaults to `"http"`)
+
+### AddCloudflareQuickTunnel
+
+Creates an account-free Quick Tunnel for local development.
+
+```csharp
+IResourceBuilder<CloudflareQuickTunnelResource> AddCloudflareQuickTunnel(
+    this IDistributedApplicationBuilder builder,
+    string name,
+    int? metricsPort = null)
+```
+
+Call `WithReference` once to select the target resource and endpoint:
+
+```csharp
+IResourceBuilder<CloudflareQuickTunnelResource> WithReference<T>(
+    this IResourceBuilder<CloudflareQuickTunnelResource> tunnel,
+    IResourceBuilder<T> target,
+    string endpointName = "http")
+    where T : IResourceWithEndpoints
+```
 
 ## Complete Example
 
@@ -300,7 +340,7 @@ This is normal if you've run the application before. The integration will skip c
 
 ## Integration Tests
 
-The live integration test uses the sample AppHost to exercise both `aspire deploy` and local run mode:
+The live integration test uses the sample AppHost to exercise Quick Tunnel mode, named-tunnel local run mode, and `aspire deploy`:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID="..."
@@ -310,7 +350,7 @@ export CLOUDFLARE_TUNNEL_TOKEN="..."
 ./scripts/run-integration-tests.sh
 ```
 
-The script deploys the Docker Compose environment, verifies the public nginx route, destroys the test deployment, starts the local AppHost, and verifies the route again. GitHub Actions calls the same script with repository secrets.
+The script first creates an account-free Quick Tunnel and verifies its generated dashboard URL. It then deploys the Docker Compose environment, verifies the named public route, destroys the deployment, and verifies named-tunnel local run mode. GitHub Actions calls the same script with repository secrets.
 
 ## Security Best Practices
 
