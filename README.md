@@ -1,5 +1,10 @@
 # Shirubasoft.Aspire.CloudflareTunnels
 
+> [!IMPORTANT]
+> This repository is archived. `Shirubasoft.Aspire.CloudflareTunnels` is now developed in
+> [shirubasoft/aspire-extensions](https://github.com/shirubasoft/aspire-extensions/tree/main/extensions/Shirubasoft.Aspire.Extensions.CloudflareTunnels),
+> which publishes new versions under the same package ID. Open issues and pull requests there.
+
 An Aspire integration for [Cloudflare Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), enabling you to expose local services to the internet through Cloudflare's network during development and deployment.
 
 ## Features
